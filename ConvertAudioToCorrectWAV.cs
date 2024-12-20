@@ -84,8 +84,8 @@ public static class AudioConverter
 
             log.LogInformation("FFmpeg conversion succeeded.");
 
-            // Upload the converted file to the target blob in the AzureWebJobsStorage account
-            var blobServiceClient = new BlobServiceClient(Environment.GetEnvironmentVariable("AzureWebJobsStorage"));
+            // Use the connection string for the sa1812240914 storage account
+            var blobServiceClient = new BlobServiceClient(Environment.GetEnvironmentVariable("SA1812240914_ConnectionString"));
             string targetContainerName = targetBlobPath.Split('/')[0];
             string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
             var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
