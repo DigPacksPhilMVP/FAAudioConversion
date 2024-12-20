@@ -113,7 +113,9 @@ public static class AudioConverter
         catch (Exception ex)
         {
             log.LogError($"Error during audio conversion: {ex.Message}");
+            log.LogError($"Stack Trace: {ex.StackTrace}");
             return new ObjectResult($"An error occurred: {ex.Message}") { StatusCode = 500 };
         }
+
     }
 }
