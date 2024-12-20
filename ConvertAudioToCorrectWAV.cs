@@ -31,8 +31,7 @@ public static class AudioConverter
         }
 
         string sourceBlobUrl = payload["sourceBlobUrl"];
-        string targetBlobPath = payload["targetBlobPath"];
-        string storageConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
+        string targetBlobPath = payload["targetBlobPath"]; // This is the relative path, e.g., "convertedpacks/katiesteve_converted.wav"
 
         // Initialize BlobClient for the source blob using the full URL
         var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
@@ -76,19 +75,16 @@ public static class AudioConverter
 
         log.LogInformation("FFmpeg conversion succeeded.");
 
-        // Extract container name and blob name from the targetBlobPath
-        string targetContainerName = targetBlobPath.Split('/')[0];
-        string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
+        // Construct the full URI for the target blob in the same storage account
+        Uri sourceBlobUri = new Uri(sourceBlobUrl);
+        string targetBlobUri = $"{sourceBlobUri.Scheme}://{sourceBlobUri.Host}/{targetBlobPath}";
+        log.LogInformation($"Target blob full URI: {targetBlobUri}");
 
-        // Get the container client for the target
-        var blobServiceClient = new BlobServiceClient(storageConnectionString);
-        var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
-
-        // Get the blob client for the target blob
-        var targetBlobClient = targetBlobContainerClient.GetBlobClient(targetBlobName);
+        // Initialize BlobClient for the target blob
+        var targetBlobClient = new BlobClient(new Uri(targetBlobUri));
 
         // Upload the converted file to the target blob
-        log.LogInformation($"Uploading converted file to: {targetBlobPath}");
+        log.LogInformation($"Uploading converted file to: {targetBlobUri}");
         using (var stream = File.OpenRead(tempTargetPath))
         {
             await targetBlobClient.UploadAsync(stream, overwrite: true);
@@ -99,6 +95,6 @@ public static class AudioConverter
         File.Delete(tempTargetPath);
 
         log.LogInformation("Audio conversion completed successfully.");
-        return new OkObjectResult($"Audio file converted and uploaded to {targetBlobPath}");
+        return new OkObjectResult($"Audio file converted and uploaded to {targetBlobUri}");
     }
 }
