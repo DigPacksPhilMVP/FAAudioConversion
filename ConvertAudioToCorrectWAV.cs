@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Azure.Identity;
 using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -35,8 +36,15 @@ public static class AudioConverter
 
         try
         {
-            // Initialize BlobClient for the source blob using the full URL
-            var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
+            // Extract the storage account from the source blob URL
+            Uri sourceBlobUri = new Uri(sourceBlobUrl);
+            string storageAccountUrl = $"{sourceBlobUri.Scheme}://{sourceBlobUri.Host}";
+
+            // Initialize BlobServiceClient for the source storage account using DefaultAzureCredential
+            var sourceBlobServiceClient = new BlobServiceClient(new Uri(storageAccountUrl), new DefaultAzureCredential());
+
+            // Initialize BlobClient for the source blob
+            var sourceBlobClient = new BlobClient(sourceBlobUri, new DefaultAzureCredential());
 
             // Download the source blob to a temporary path
             string tempSourcePath = Path.GetTempFileName();
@@ -81,11 +89,10 @@ public static class AudioConverter
 
             log.LogInformation("FFmpeg conversion succeeded.");
 
-            // Upload the converted file to the target blob
-            var blobServiceClient = new BlobServiceClient(Environment.GetEnvironmentVariable("AzureWebJobsStorage"));
+            // Get the container and blob client for the target
             string targetContainerName = targetBlobPath.Split('/')[0];
             string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
-            var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
+            var targetBlobContainerClient = sourceBlobServiceClient.GetBlobContainerClient(targetContainerName);
 
             // Check if the container exists, and create it if it doesn't
             if (!await targetBlobContainerClient.ExistsAsync())
