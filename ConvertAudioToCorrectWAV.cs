@@ -47,7 +47,7 @@ public static class AudioConverter
             string tempTargetPath = Path.ChangeExtension(Path.GetTempFileName(), ".wav");
 
             // Run FFmpeg
-            string ffmpegPath = Path.Combine(Environment.CurrentDirectory, "tools", "ffmpeg.exe");
+            string ffmpegPath = Path.Combine(AppContext.BaseDirectory, "tools", "ffmpeg.exe");
             string arguments = $"-i \"{tempSourcePath}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{tempTargetPath}\"";
 
             log.LogInformation($"FFmpeg path: {ffmpegPath}");
