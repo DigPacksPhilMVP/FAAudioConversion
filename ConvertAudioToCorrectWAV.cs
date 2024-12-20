@@ -31,7 +31,7 @@ public static class AudioConverter
         }
 
         string sourceBlobUrl = payload["sourceBlobUrl"];
-        string targetBlobPath = payload["targetBlobPath"]; // This is the relative path, e.g., "convertedpacks/katiesteve_converted.wav"
+        string targetBlobPath = payload["targetBlobPath"];
 
         try
         {
@@ -50,11 +50,7 @@ public static class AudioConverter
             string ffmpegPath = @"C:\home\site\wwwroot\tools\ffmpeg.exe";
             string arguments = $"-i \"{tempSourcePath}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{tempTargetPath}\"";
 
-            log.LogInformation($"FFmpeg path: {ffmpegPath}");
-            log.LogInformation($"FFmpeg arguments: {arguments}");
-            log.LogInformation($"Input file path: {tempSourcePath}");
-            log.LogInformation($"Output file path: {tempTargetPath}");
-
+            log.LogInformation($"Running FFmpeg with arguments: {arguments}");
             var process = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -85,16 +81,14 @@ public static class AudioConverter
 
             log.LogInformation("FFmpeg conversion succeeded.");
 
-            // Construct the full URI for the target blob in the same storage account
-            Uri sourceBlobUri = new Uri(sourceBlobUrl);
-            string targetBlobUri = $"{sourceBlobUri.Scheme}://{sourceBlobUri.Host}/{targetBlobPath}";
-            log.LogInformation($"Target blob full URI: {targetBlobUri}");
-
-            // Initialize BlobClient for the target blob
-            var targetBlobClient = new BlobClient(new Uri(targetBlobUri));
-
             // Upload the converted file to the target blob
-            log.LogInformation($"Uploading converted file to: {targetBlobUri}");
+            var blobServiceClient = new BlobServiceClient(Environment.GetEnvironmentVariable("AzureWebJobsStorage"));
+            string targetContainerName = targetBlobPath.Split('/')[0];
+            string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
+            var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
+            var targetBlobClient = targetBlobContainerClient.GetBlobClient(targetBlobName);
+
+            log.LogInformation($"Uploading converted file to: {targetBlobPath}");
             using (var stream = File.OpenRead(tempTargetPath))
             {
                 await targetBlobClient.UploadAsync(stream, overwrite: true);
@@ -105,12 +99,11 @@ public static class AudioConverter
             File.Delete(tempTargetPath);
 
             log.LogInformation("Audio conversion completed successfully.");
-            return new OkObjectResult($"Audio file converted and uploaded to {targetBlobUri}");
+            return new OkObjectResult($"Audio file converted and uploaded to {targetBlobPath}");
         }
         catch (Exception ex)
         {
             log.LogError($"Error during audio conversion: {ex.Message}");
-            log.LogError($"Stack Trace: {ex.StackTrace}");
             return new ObjectResult($"An error occurred: {ex.Message}") { StatusCode = 500 };
         }
     }
