@@ -1,13 +1,15 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Azure.Storage.Blobs;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
-using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
-using System;
 
 public static class AudioConverter
 {
@@ -18,15 +20,19 @@ public static class AudioConverter
     {
         log.LogInformation("Audio conversion function triggered.");
 
-        // Extract query parameters
-        string sourceBlobPath = req.Query["sourceBlobPath"];
-        string targetBlobPath = req.Query["targetBlobPath"];
-        string storageConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
+        // Read and parse the HTTP request body
+        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+        var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
 
-        if (string.IsNullOrEmpty(sourceBlobPath) || string.IsNullOrEmpty(targetBlobPath))
+        // Extract sourceBlobPath and targetBlobPath from payload
+        if (payload == null || !payload.ContainsKey("sourceBlobPath") || !payload.ContainsKey("targetBlobPath"))
         {
-            return new BadRequestObjectResult("Please provide both 'sourceBlobPath' and 'targetBlobPath' in the query string.");
+            return new BadRequestObjectResult("The payload must contain 'sourceBlobPath' and 'targetBlobPath'.");
         }
+
+        string sourceBlobPath = payload["sourceBlobPath"];
+        string targetBlobPath = payload["targetBlobPath"];
+        string storageConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
 
         // Initialize BlobServiceClient
         var blobServiceClient = new BlobServiceClient(storageConnectionString);
