@@ -24,34 +24,25 @@ public static class AudioConverter
         string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
         var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
 
-        // Extract sourceBlobPath and targetBlobPath from payload
-        if (payload == null || !payload.ContainsKey("sourceBlobPath") || !payload.ContainsKey("targetBlobPath"))
+        // Extract sourceBlobUrl and targetBlobPath from payload
+        if (payload == null || !payload.ContainsKey("sourceBlobUrl") || !payload.ContainsKey("targetBlobPath"))
         {
-            return new BadRequestObjectResult("The payload must contain 'sourceBlobPath' and 'targetBlobPath'.");
+            return new BadRequestObjectResult("The payload must contain 'sourceBlobUrl' and 'targetBlobPath'.");
         }
 
-        string sourceBlobPath = payload["sourceBlobPath"];
+        string sourceBlobUrl = payload["sourceBlobUrl"];
         string targetBlobPath = payload["targetBlobPath"];
         string storageConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
 
-        // Initialize BlobServiceClient
-        var blobServiceClient = new BlobServiceClient(storageConnectionString);
+        // Initialize BlobClient for the source blob using the full URL
+        var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
 
-        // Get the container client (assuming the blob path includes the container name)
-        string containerName = sourceBlobPath.Split('/')[0];
-        string blobName = sourceBlobPath.Substring(containerName.Length + 1);
-
-        // Create a BlobContainerClient
-        var blobContainerClient = blobServiceClient.GetBlobContainerClient(containerName);
-
-        // Create a BlobClient for the specific blob
-        var sourceBlobClient = blobContainerClient.GetBlobClient(blobName);
-
+        // Download the source blob to a temporary path
         string tempSourcePath = Path.GetTempFileName();
-        log.LogInformation($"Downloading blob from: {sourceBlobPath}");
+        log.LogInformation($"Downloading blob from URL: {sourceBlobUrl}");
         await sourceBlobClient.DownloadToAsync(tempSourcePath);
 
-        // Temporary path for converted file
+        // Temporary path for the converted file
         string tempTargetPath = Path.ChangeExtension(Path.GetTempFileName(), ".wav");
 
         // Run FFmpeg
@@ -90,6 +81,7 @@ public static class AudioConverter
         string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
 
         // Get the container client for the target
+        var blobServiceClient = new BlobServiceClient(storageConnectionString);
         var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
 
         // Get the blob client for the target blob
