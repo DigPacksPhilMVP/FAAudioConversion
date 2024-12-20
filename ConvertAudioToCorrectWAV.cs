@@ -86,6 +86,15 @@ public static class AudioConverter
             string targetContainerName = targetBlobPath.Split('/')[0];
             string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
             var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
+
+            // Check if the container exists, and create it if it doesn't
+            if (!await targetBlobContainerClient.ExistsAsync())
+            {
+                log.LogInformation($"Container '{targetContainerName}' does not exist. Creating it.");
+                await targetBlobContainerClient.CreateIfNotExistsAsync();
+                log.LogInformation($"Container '{targetContainerName}' created.");
+            }
+
             var targetBlobClient = targetBlobContainerClient.GetBlobClient(targetBlobName);
 
             log.LogInformation($"Uploading converted file to: {targetBlobPath}");
