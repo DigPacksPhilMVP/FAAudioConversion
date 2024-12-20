@@ -20,81 +20,106 @@ public static class AudioConverter
     {
         log.LogInformation("Audio conversion function triggered.");
 
-        // Read and parse the HTTP request body
-        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-        var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
-
-        // Extract sourceBlobUrl and targetBlobPath from payload
-        if (payload == null || !payload.ContainsKey("sourceBlobUrl") || !payload.ContainsKey("targetBlobPath"))
+        try
         {
-            return new BadRequestObjectResult("The payload must contain 'sourceBlobUrl' and 'targetBlobPath'.");
-        }
+            // Parse request body
+            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
 
-        string sourceBlobUrl = payload["sourceBlobUrl"];
-        string targetBlobPath = payload["targetBlobPath"]; // This is the relative path, e.g., "convertedpacks/katiesteve_converted.wav"
-
-        // Initialize BlobClient for the source blob using the full URL
-        var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
-
-        // Download the source blob to a temporary path
-        string tempSourcePath = Path.GetTempFileName();
-        log.LogInformation($"Downloading blob from URL: {sourceBlobUrl}");
-        await sourceBlobClient.DownloadToAsync(tempSourcePath);
-
-        // Temporary path for the converted file
-        string tempTargetPath = Path.ChangeExtension(Path.GetTempFileName(), ".wav");
-
-        // Run FFmpeg
-        string ffmpegPath = Path.Combine(Environment.CurrentDirectory, "tools", "ffmpeg.exe");
-        string arguments = $"-i \"{tempSourcePath}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{tempTargetPath}\"";
-
-        log.LogInformation($"Running FFmpeg with arguments: {arguments}");
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
+            if (payload == null || !payload.ContainsKey("sourceBlobUrl") || !payload.ContainsKey("targetBlobPath"))
             {
-                FileName = ffmpegPath,
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                return new BadRequestObjectResult("The payload must contain 'sourceBlobUrl' and 'targetBlobPath'.");
             }
-        };
 
-        process.Start();
-        string output = await process.StandardOutput.ReadToEndAsync();
-        string error = await process.StandardError.ReadToEndAsync();
-        process.WaitForExit();
+            string sourceBlobUrl = payload["sourceBlobUrl"];
+            string targetBlobPath = payload["targetBlobPath"];
 
-        if (process.ExitCode != 0)
-        {
-            log.LogError($"FFmpeg failed with error: {error}");
-            return new BadRequestObjectResult($"FFmpeg conversion failed: {error}");
+            log.LogInformation($"Source Blob URL: {sourceBlobUrl}");
+            log.LogInformation($"Target Blob Path: {targetBlobPath}");
+
+            // Initialize BlobClient for the source blob using its URL
+            var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
+
+            // Download the source blob to a temporary path
+            string tempSourcePath = Path.GetTempFileName();
+            log.LogInformation($"Downloading blob from URL: {sourceBlobUrl}");
+            await sourceBlobClient.DownloadToAsync(tempSourcePath);
+
+            // Temporary path for the converted file
+            string tempTargetPath = Path.ChangeExtension(Path.GetTempFileName(), ".wav");
+            log.LogInformation($"Temporary target path: {tempTargetPath}");
+
+            // Run FFmpeg
+            string ffmpegPath = @"C:\home\site\wwwroot\tools\ffmpeg.exe";
+            string arguments = $"-i \"{tempSourcePath}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{tempTargetPath}\"";
+
+            log.LogInformation($"Running FFmpeg with arguments: {arguments}");
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = arguments,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            string output = await process.StandardOutput.ReadToEndAsync();
+            string error = await process.StandardError.ReadToEndAsync();
+            process.WaitForExit();
+
+            log.LogInformation($"FFmpeg output: {output}");
+            log.LogInformation($"FFmpeg error output: {error}");
+            log.LogInformation($"FFmpeg exited with code: {process.ExitCode}");
+
+            if (process.ExitCode != 0)
+            {
+                log.LogError($"FFmpeg failed with exit code {process.ExitCode}: {error}");
+                return new BadRequestObjectResult($"FFmpeg conversion failed: {error}");
+            }
+
+            log.LogInformation("FFmpeg conversion succeeded.");
+
+            // Upload the converted file to the target blob in the AzureWebJobsStorage account
+            var blobServiceClient = new BlobServiceClient(Environment.GetEnvironmentVariable("AzureWebJobsStorage"));
+            string targetContainerName = targetBlobPath.Split('/')[0];
+            string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
+            var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
+
+            // Check if the container exists, and create it if it doesn't
+            if (!await targetBlobContainerClient.ExistsAsync())
+            {
+                log.LogWarning($"Container '{targetContainerName}' does not exist. Creating it.");
+                await targetBlobContainerClient.CreateIfNotExistsAsync();
+                log.LogInformation($"Container '{targetContainerName}' created.");
+            }
+
+            var targetBlobClient = targetBlobContainerClient.GetBlobClient(targetBlobName);
+
+            log.LogInformation($"Uploading converted file to: {targetBlobPath}");
+            using (var stream = File.OpenRead(tempTargetPath))
+            {
+                await targetBlobClient.UploadAsync(stream, overwrite: true);
+            }
+
+            log.LogInformation($"File uploaded successfully to {targetBlobPath}");
+
+            // Clean up temporary files
+            File.Delete(tempSourcePath);
+            File.Delete(tempTargetPath);
+
+            log.LogInformation("Audio conversion completed successfully.");
+            return new OkObjectResult($"Audio file converted and uploaded to {targetBlobPath}");
         }
-
-        log.LogInformation("FFmpeg conversion succeeded.");
-
-        // Construct the full URI for the target blob in the same storage account
-        Uri sourceBlobUri = new Uri(sourceBlobUrl);
-        string targetBlobUri = $"{sourceBlobUri.Scheme}://{sourceBlobUri.Host}/{targetBlobPath}";
-        log.LogInformation($"Target blob full URI: {targetBlobUri}");
-
-        // Initialize BlobClient for the target blob
-        var targetBlobClient = new BlobClient(new Uri(targetBlobUri));
-
-        // Upload the converted file to the target blob
-        log.LogInformation($"Uploading converted file to: {targetBlobUri}");
-        using (var stream = File.OpenRead(tempTargetPath))
+        catch (Exception ex)
         {
-            await targetBlobClient.UploadAsync(stream, overwrite: true);
+            log.LogError($"Error during audio conversion: {ex.Message}");
+            log.LogError($"Stack Trace: {ex.StackTrace}");
+            return new ObjectResult($"An error occurred: {ex.Message}") { StatusCode = 500 };
         }
-
-        // Clean up temporary files
-        File.Delete(tempSourcePath);
-        File.Delete(tempTargetPath);
-
-        log.LogInformation("Audio conversion completed successfully.");
-        return new OkObjectResult($"Audio file converted and uploaded to {targetBlobUri}");
     }
 }
