@@ -113,7 +113,9 @@ public static class AudioConverter
             File.Delete(tempTargetPath);
 
             log.LogInformation("Audio conversion completed successfully.");
-            return new OkObjectResult($"Audio file converted and uploaded to {targetBlobPath}");
+            string targetBlobUri = targetBlobClient.Uri.ToString();
+            log.LogInformation($"Converted file URI: {targetBlobUri}");
+            return new OkObjectResult(new { message = "Audio file converted successfully", fileUri = targetBlobUri });
         }
         catch (Exception ex)
         {
