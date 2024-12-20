@@ -33,68 +33,85 @@ public static class AudioConverter
         string sourceBlobUrl = payload["sourceBlobUrl"];
         string targetBlobPath = payload["targetBlobPath"]; // This is the relative path, e.g., "convertedpacks/katiesteve_converted.wav"
 
-        // Initialize BlobClient for the source blob using the full URL
-        var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
-
-        // Download the source blob to a temporary path
-        string tempSourcePath = Path.GetTempFileName();
-        log.LogInformation($"Downloading blob from URL: {sourceBlobUrl}");
-        await sourceBlobClient.DownloadToAsync(tempSourcePath);
-
-        // Temporary path for the converted file
-        string tempTargetPath = Path.ChangeExtension(Path.GetTempFileName(), ".wav");
-
-        // Run FFmpeg
-        string ffmpegPath = Path.Combine(Environment.CurrentDirectory, "tools", "ffmpeg.exe");
-        string arguments = $"-i \"{tempSourcePath}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{tempTargetPath}\"";
-
-        log.LogInformation($"Running FFmpeg with arguments: {arguments}");
-        var process = new Process
+        try
         {
-            StartInfo = new ProcessStartInfo
+            // Initialize BlobClient for the source blob using the full URL
+            var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
+
+            // Download the source blob to a temporary path
+            string tempSourcePath = Path.GetTempFileName();
+            log.LogInformation($"Downloading blob from URL: {sourceBlobUrl}");
+            await sourceBlobClient.DownloadToAsync(tempSourcePath);
+
+            // Temporary path for the converted file
+            string tempTargetPath = Path.ChangeExtension(Path.GetTempFileName(), ".wav");
+
+            // Run FFmpeg
+            string ffmpegPath = Path.Combine(Environment.CurrentDirectory, "tools", "ffmpeg.exe");
+            string arguments = $"-i \"{tempSourcePath}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{tempTargetPath}\"";
+
+            log.LogInformation($"FFmpeg path: {ffmpegPath}");
+            log.LogInformation($"FFmpeg arguments: {arguments}");
+            log.LogInformation($"Input file path: {tempSourcePath}");
+            log.LogInformation($"Output file path: {tempTargetPath}");
+
+            var process = new Process
             {
-                FileName = ffmpegPath,
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = arguments,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            string output = await process.StandardOutput.ReadToEndAsync();
+            string error = await process.StandardError.ReadToEndAsync();
+            process.WaitForExit();
+
+            log.LogInformation($"FFmpeg output: {output}");
+            log.LogInformation($"FFmpeg error output: {error}");
+            log.LogInformation($"FFmpeg exited with code: {process.ExitCode}");
+
+            if (process.ExitCode != 0)
+            {
+                log.LogError($"FFmpeg failed with exit code {process.ExitCode}: {error}");
+                return new BadRequestObjectResult($"FFmpeg conversion failed: {error}");
             }
-        };
 
-        process.Start();
-        string output = await process.StandardOutput.ReadToEndAsync();
-        string error = await process.StandardError.ReadToEndAsync();
-        process.WaitForExit();
+            log.LogInformation("FFmpeg conversion succeeded.");
 
-        if (process.ExitCode != 0)
-        {
-            log.LogError($"FFmpeg failed with error: {error}");
-            return new BadRequestObjectResult($"FFmpeg conversion failed: {error}");
+            // Construct the full URI for the target blob in the same storage account
+            Uri sourceBlobUri = new Uri(sourceBlobUrl);
+            string targetBlobUri = $"{sourceBlobUri.Scheme}://{sourceBlobUri.Host}/{targetBlobPath}";
+            log.LogInformation($"Target blob full URI: {targetBlobUri}");
+
+            // Initialize BlobClient for the target blob
+            var targetBlobClient = new BlobClient(new Uri(targetBlobUri));
+
+            // Upload the converted file to the target blob
+            log.LogInformation($"Uploading converted file to: {targetBlobUri}");
+            using (var stream = File.OpenRead(tempTargetPath))
+            {
+                await targetBlobClient.UploadAsync(stream, overwrite: true);
+            }
+
+            // Clean up temporary files
+            File.Delete(tempSourcePath);
+            File.Delete(tempTargetPath);
+
+            log.LogInformation("Audio conversion completed successfully.");
+            return new OkObjectResult($"Audio file converted and uploaded to {targetBlobUri}");
         }
-
-        log.LogInformation("FFmpeg conversion succeeded.");
-
-        // Construct the full URI for the target blob in the same storage account
-        Uri sourceBlobUri = new Uri(sourceBlobUrl);
-        string targetBlobUri = $"{sourceBlobUri.Scheme}://{sourceBlobUri.Host}/{targetBlobPath}";
-        log.LogInformation($"Target blob full URI: {targetBlobUri}");
-
-        // Initialize BlobClient for the target blob
-        var targetBlobClient = new BlobClient(new Uri(targetBlobUri));
-
-        // Upload the converted file to the target blob
-        log.LogInformation($"Uploading converted file to: {targetBlobUri}");
-        using (var stream = File.OpenRead(tempTargetPath))
+        catch (Exception ex)
         {
-            await targetBlobClient.UploadAsync(stream, overwrite: true);
+            log.LogError($"Error during audio conversion: {ex.Message}");
+            log.LogError($"Stack Trace: {ex.StackTrace}");
+            return new ObjectResult($"An error occurred: {ex.Message}") { StatusCode = 500 };
         }
-
-        // Clean up temporary files
-        File.Delete(tempSourcePath);
-        File.Delete(tempTargetPath);
-
-        log.LogInformation("Audio conversion completed successfully.");
-        return new OkObjectResult($"Audio file converted and uploaded to {targetBlobUri}");
     }
 }
