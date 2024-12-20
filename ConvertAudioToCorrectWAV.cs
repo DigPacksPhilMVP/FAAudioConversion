@@ -20,37 +20,44 @@ public static class AudioConverter
     {
         log.LogInformation("Audio conversion function triggered.");
 
-        // Read and parse the HTTP request body
-        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-        var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
-
-        // Extract sourceBlobUrl and targetBlobPath from payload
-        if (payload == null || !payload.ContainsKey("sourceBlobUrl") || !payload.ContainsKey("targetBlobPath"))
-        {
-            return new BadRequestObjectResult("The payload must contain 'sourceBlobUrl' and 'targetBlobPath'.");
-        }
-
-        string sourceBlobUrl = payload["sourceBlobUrl"];
-        string targetBlobPath = payload["targetBlobPath"];
-
         try
         {
-            // Initialize BlobClient for the source blob using the full URL
+            // Read and parse the HTTP request body
+            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            log.LogInformation($"Request body: {requestBody}");
+
+            var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
+            if (payload == null || !payload.ContainsKey("sourceBlobUrl") || !payload.ContainsKey("targetBlobPath"))
+            {
+                log.LogError("The payload must contain 'sourceBlobUrl' and 'targetBlobPath'.");
+                return new BadRequestObjectResult("The payload must contain 'sourceBlobUrl' and 'targetBlobPath'.");
+            }
+
+            string sourceBlobUrl = payload["sourceBlobUrl"];
+            string targetBlobPath = payload["targetBlobPath"];
+            log.LogInformation($"Source Blob URL: {sourceBlobUrl}");
+            log.LogInformation($"Target Blob Path: {targetBlobPath}");
+
+            // Initialize BlobClient for the source blob
             var sourceBlobClient = new BlobClient(new Uri(sourceBlobUrl));
 
             // Download the source blob to a temporary path
             string tempSourcePath = Path.GetTempFileName();
             log.LogInformation($"Downloading blob from URL: {sourceBlobUrl}");
             await sourceBlobClient.DownloadToAsync(tempSourcePath);
+            log.LogInformation($"Source blob downloaded to: {tempSourcePath}");
 
             // Temporary path for the converted file
             string tempTargetPath = Path.ChangeExtension(Path.GetTempFileName(), ".wav");
+            log.LogInformation($"Temporary target path: {tempTargetPath}");
 
             // Run FFmpeg
             string ffmpegPath = @"C:\home\site\wwwroot\tools\ffmpeg.exe";
             string arguments = $"-i \"{tempSourcePath}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{tempTargetPath}\"";
 
-            log.LogInformation($"Running FFmpeg with arguments: {arguments}");
+            log.LogInformation($"FFmpeg path: {ffmpegPath}");
+            log.LogInformation($"FFmpeg arguments: {arguments}");
+
             var process = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -85,12 +92,15 @@ public static class AudioConverter
             var blobServiceClient = new BlobServiceClient(Environment.GetEnvironmentVariable("AzureWebJobsStorage"));
             string targetContainerName = targetBlobPath.Split('/')[0];
             string targetBlobName = targetBlobPath.Substring(targetContainerName.Length + 1);
+            log.LogInformation($"Target container name: {targetContainerName}");
+            log.LogInformation($"Target blob name: {targetBlobName}");
+
             var targetBlobContainerClient = blobServiceClient.GetBlobContainerClient(targetContainerName);
 
             // Check if the container exists, and create it if it doesn't
             if (!await targetBlobContainerClient.ExistsAsync())
             {
-                log.LogInformation($"Container '{targetContainerName}' does not exist. Creating it.");
+                log.LogWarning($"Container '{targetContainerName}' does not exist. Creating it.");
                 await targetBlobContainerClient.CreateIfNotExistsAsync();
                 log.LogInformation($"Container '{targetContainerName}' created.");
             }
@@ -102,6 +112,8 @@ public static class AudioConverter
             {
                 await targetBlobClient.UploadAsync(stream, overwrite: true);
             }
+
+            log.LogInformation($"File uploaded successfully to {targetBlobPath}");
 
             // Clean up temporary files
             File.Delete(tempSourcePath);
@@ -116,6 +128,5 @@ public static class AudioConverter
             log.LogError($"Stack Trace: {ex.StackTrace}");
             return new ObjectResult($"An error occurred: {ex.Message}") { StatusCode = 500 };
         }
-
     }
 }
